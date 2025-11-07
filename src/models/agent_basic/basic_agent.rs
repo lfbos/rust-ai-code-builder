@@ -4,7 +4,7 @@ use crate::models::{agent_basic::basic_traits::BasicTraits, general::llm::Messag
 pub enum AgentState {
     Discovery,
     Working,
-    UnitTEsting,
+    UnitTesting,
     Finished,
 }
 
