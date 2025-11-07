@@ -1,9 +1,22 @@
-use std::{fmt::format, time::Duration};
+use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 
-use crate::{ai_functions::aifunc_architect::{print_project_scope, print_site_urls}, helpers::{command_line::PrintCommand, general::{ai_task_request_decoded, check_status_code}}, models::{agent_basic::{basic_agent::{AgentState, BasicAgent}, basic_traits::{BasicTraits, SpecialFunctions}}, agents::traits::{FactSheet, ProjectScope}}};
+use crate::{
+    ai_functions::aifunc_architect::{print_project_scope, print_site_urls},
+    helpers::{
+        command_line::PrintCommand,
+        general::{ai_task_request_decoded, check_status_code},
+    },
+    models::{
+        agent_basic::{
+            basic_agent::{AgentState, BasicAgent},
+            basic_traits::{BasicTraits, SpecialFunctions},
+        },
+        agents::traits::{FactSheet, ProjectScope},
+    },
+};
 
 // Solutions Architect
 #[derive(Debug)]
@@ -29,11 +42,12 @@ impl AgentSolutionArchitect {
         let msg_context: String = format!("{}", factsheet.project_description);
 
         let ai_response: ProjectScope = ai_task_request_decoded::<ProjectScope>(
-            msg_context, 
+            msg_context,
             &self.attributes.position,
             get_function_string!(print_project_scope),
             print_project_scope,
-        ).await;
+        )
+        .await;
 
         factsheet.project_scope = Some(ai_response.clone());
 
@@ -42,13 +56,18 @@ impl AgentSolutionArchitect {
     }
 
     // Call external urls
-    async fn call_determine_external_urls(&mut self, factsheet: &mut FactSheet, msg_context: String) {
+    async fn call_determine_external_urls(
+        &mut self,
+        factsheet: &mut FactSheet,
+        msg_context: String,
+    ) {
         let ai_response: Vec<String> = ai_task_request_decoded::<Vec<String>>(
             msg_context,
             &self.attributes.position,
             get_function_string!(print_site_urls),
-            print_site_urls
-        ).await;
+            print_site_urls,
+        )
+        .await;
 
         factsheet.external_urls = Some(ai_response);
         self.attributes.state = AgentState::UnitTesting;
@@ -57,7 +76,7 @@ impl AgentSolutionArchitect {
 
 #[async_trait]
 impl SpecialFunctions for AgentSolutionArchitect {
-    fn get_attributes_from_agent(&self) ->  &BasicAgent {
+    fn get_attributes_from_agent(&self) -> &BasicAgent {
         &self.attributes
     }
 
@@ -71,7 +90,11 @@ impl SpecialFunctions for AgentSolutionArchitect {
                 AgentState::Discovery => {
                     let project_scope = self.call_project_scope(factsheet).await;
                     if project_scope.is_external_urls_required {
-                        self.call_determine_external_urls(factsheet, factsheet.project_description.clone()).await;
+                        self.call_determine_external_urls(
+                            factsheet,
+                            factsheet.project_description.clone(),
+                        )
+                        .await;
                         self.attributes.state = AgentState::UnitTesting;
                     }
                 }
@@ -86,26 +109,28 @@ impl SpecialFunctions for AgentSolutionArchitect {
 
                     // Defining urls to check
                     let urls: &Vec<String> = factsheet
-                        .external_urls.as_ref().expect("No URL object on facsheet");
-                    
+                        .external_urls
+                        .as_ref()
+                        .expect("No URL object on facsheet");
+
                     // Find faulty urls
                     for url in urls {
                         let endpoint: String = format!("Testing URL Endpoint: {}", url);
                         PrintCommand::UnitTest.print_agent_message(
-                            self.attributes.position.as_ref(), 
-                            endpoint.as_ref()
+                            self.attributes.position.as_ref(),
+                            endpoint.as_ref(),
                         );
-                        
+
                         // Perform URL Test
                         match check_status_code(&client, url).await {
                             Ok(status_code) => {
                                 if status_code != 200 {
                                     exclude_urls.push(url.clone());
                                 }
-                            },
-                            Err(e) => println!("Error checking {}: {}", url, e)
+                            }
+                            Err(e) => println!("Error checking {}: {}", url, e),
                         }
-                    };
+                    }
 
                     // Exclude any faulty urls
                     if exclude_urls.len() > 0 {
@@ -150,11 +175,14 @@ mod tests {
             api_endpoint_schema: None
         };
 
-        agent.execute(&mut factsheet).await.expect("Unable to execute Solutions Architect Agent");
-        
+        agent
+            .execute(&mut factsheet)
+            .await
+            .expect("Unable to execute Solutions Architect Agent");
+
         assert!(factsheet.project_scope != None);
         assert!(factsheet.external_urls.is_some());
-        
+
         dbg!(factsheet);
     }
 }
