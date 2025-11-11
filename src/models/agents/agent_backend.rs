@@ -5,8 +5,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use serde::de::Error as _;
 use reqwest::Client;
+use serde::de::Error as _;
 use tokio::time;
 
 use crate::{
@@ -142,9 +142,7 @@ impl AgentBackendDeveloper {
 
         for endpoint in endpoints_array.iter_mut() {
             if let Some(endpoint_map) = endpoint.as_object_mut() {
-                if let Some(is_route_dynamic_value) =
-                    endpoint_map.get_mut("is_route_dynamic")
-                {
+                if let Some(is_route_dynamic_value) = endpoint_map.get_mut("is_route_dynamic") {
                     if let Some(is_route_dynamic_string) =
                         is_route_dynamic_value.as_str().map(|s| s.to_lowercase())
                     {
@@ -237,7 +235,7 @@ impl SpecialFunctions for AgentBackendDeveloper {
                         let error_str: String = String::from_utf8(error_arr).unwrap();
 
                         // Update error stats
-                        
+
                         self.bug_count += 1;
                         self.bug_errors = Some(error_str);
 
@@ -265,10 +263,9 @@ impl SpecialFunctions for AgentBackendDeveloper {
                     let api_endpoint_str: String = self.call_extract_rest_api_endpoints().await;
                     dbg!(api_endpoint_str.clone());
                     // Convert API Endpoints into valus
-                    let api_endpoints: Vec<RouteObject> = Self::deserialize_api_endpoints(
-                        api_endpoint_str.as_str(),
-                    )
-                    .expect("Failed to decode API Endpoints");
+                    let api_endpoints: Vec<RouteObject> =
+                        Self::deserialize_api_endpoints(api_endpoint_str.as_str())
+                            .expect("Failed to decode API Endpoints");
 
                     // Define endpoints to check
                     let check_endpoints: Vec<RouteObject> = api_endpoints
