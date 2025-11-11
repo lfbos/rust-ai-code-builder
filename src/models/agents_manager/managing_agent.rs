@@ -69,7 +69,6 @@ impl ManagingAgent {
             let _ = agent.execute(&mut self.factsheet).await;
 
             let agent_info = agent.get_attributes_from_agent();
-            dbg!(agent_info);
         }
     }
 }
@@ -87,7 +86,5 @@ mod tests {
             .expect("Error creating managing agent");
 
         managing_agent.execute_project().await;
-
-        dbg!(managing_agent.factsheet);
     }
 }

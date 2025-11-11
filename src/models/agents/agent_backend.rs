@@ -1,14 +1,33 @@
+use core::panic;
+use std::{
+    process::{Command, Stdio},
+    time::Duration,
+};
+
+use async_trait::async_trait;
+use serde::de::Error as _;
+use reqwest::Client;
+use tokio::time;
+
 use crate::{
     ai_functions::aifunc_backend::{
         print_backend_webserver_code, print_fixed_code, print_improved_webserver_code,
         print_rest_api_endpoints,
     },
-    helpers::general::{
-        ai_task_request, read_code_template_contents, read_exec_main_contents, save_backend_code,
+    helpers::{
+        command_line::{PrintCommand, confirm_safe_code},
+        general::{
+            WEB_SERVER_PROJECT_PATH, ai_task_request, check_status_code,
+            read_code_template_contents, read_exec_main_contents, save_api_endpoints,
+            save_backend_code,
+        },
     },
     models::{
-        agent_basic::basic_agent::{AgentState, BasicAgent},
-        agents::traits::{FactSheet, ProjectScope},
+        agent_basic::{
+            basic_agent::{AgentState, BasicAgent},
+            basic_traits::SpecialFunctions,
+        },
+        agents::traits::{FactSheet, RouteObject},
     },
 };
 
@@ -110,5 +129,277 @@ impl AgentBackendDeveloper {
         .await;
 
         ai_response
+    }
+
+    fn deserialize_api_endpoints(
+        api_endpoint_str: &str,
+    ) -> Result<Vec<RouteObject>, serde_json::Error> {
+        let mut json_value: serde_json::Value = serde_json::from_str(api_endpoint_str)?;
+
+        let endpoints_array = json_value
+            .as_array_mut()
+            .ok_or_else(|| serde_json::Error::custom("Expected endpoints to be an array"))?;
+
+        for endpoint in endpoints_array.iter_mut() {
+            if let Some(endpoint_map) = endpoint.as_object_mut() {
+                if let Some(is_route_dynamic_value) =
+                    endpoint_map.get_mut("is_route_dynamic")
+                {
+                    if let Some(is_route_dynamic_string) =
+                        is_route_dynamic_value.as_str().map(|s| s.to_lowercase())
+                    {
+                        let bool_value = match is_route_dynamic_string.as_str() {
+                            "true" => true,
+                            "false" => false,
+                            other => {
+                                return Err(serde_json::Error::custom(format!(
+                                    "Unsupported value for 'is_route_dynamic': {}",
+                                    other
+                                )));
+                            }
+                        };
+                        *is_route_dynamic_value = serde_json::Value::Bool(bool_value);
+                    }
+                }
+            }
+        }
+
+        serde_json::from_value(json_value)
+    }
+}
+
+#[async_trait]
+impl SpecialFunctions for AgentBackendDeveloper {
+    fn get_attributes_from_agent(&self) -> &BasicAgent {
+        &self.attributes
+    }
+
+    async fn execute(
+        &mut self,
+        factsheet: &mut FactSheet,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        while self.attributes.state != AgentState::Finished {
+            match &self.attributes.state {
+                AgentState::Discovery => {
+                    self.call_initial_backend_code(factsheet).await;
+                    self.attributes.state = AgentState::Working;
+                    continue;
+                }
+
+                AgentState::Working => {
+                    if self.bug_count == 0 {
+                        self.call_improve_backend_code(factsheet).await;
+                    } else {
+                        self.call_fix_code_bugs(factsheet).await;
+                    }
+                    self.attributes.state = AgentState::UnitTesting;
+                    continue;
+                }
+
+                AgentState::UnitTesting => {
+                    // Guard:: Ensure AI Safety
+                    PrintCommand::UnitTest.print_agent_message(
+                        self.attributes.position.as_str(),
+                        "Backend Code Unit Testing: Requesting user input",
+                    );
+
+                    let is_safe_code = confirm_safe_code();
+
+                    if !is_safe_code {
+                        panic!("Better go work on some AI alignment instead...");
+                    }
+
+                    // Build and Test Code
+
+                    PrintCommand::UnitTest.print_agent_message(
+                        self.attributes.position.as_str(),
+                        "Backend Code Unit Testing: Building project...",
+                    );
+
+                    let build_backend_server: std::process::Output = Command::new("cargo")
+                        .arg("build")
+                        .current_dir(WEB_SERVER_PROJECT_PATH)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .output()
+                        .expect("Failed to build backend application");
+
+                    // Determine if build errors
+                    if build_backend_server.status.success() {
+                        self.bug_count = 0;
+
+                        PrintCommand::UnitTest.print_agent_message(
+                            self.attributes.position.as_str(),
+                            "Backend Code Unit Testing: Test server build successful...",
+                        );
+                    } else {
+                        let error_arr: Vec<u8> = build_backend_server.stderr;
+                        let error_str: String = String::from_utf8(error_arr).unwrap();
+
+                        // Update error stats
+                        
+                        self.bug_count += 1;
+                        self.bug_errors = Some(error_str);
+
+                        // Exit if too many bugs
+                        if self.bug_count > 2 {
+                            PrintCommand::Issue.print_agent_message(
+                                self.attributes.position.as_str(),
+                                "Backend Code Unit Testing: Too many bugs found in code",
+                            );
+
+                            panic!("Error: Too many bugs");
+                        }
+
+                        // Pass back for rework
+                        self.attributes.state = AgentState::Working;
+                        continue;
+                    }
+
+                    /*
+                        Extract and Test
+                        Rest API Endpoints
+                    */
+
+                    // Extract API Endpoints
+                    let api_endpoint_str: String = self.call_extract_rest_api_endpoints().await;
+                    dbg!(api_endpoint_str.clone());
+                    // Convert API Endpoints into valus
+                    let api_endpoints: Vec<RouteObject> = Self::deserialize_api_endpoints(
+                        api_endpoint_str.as_str(),
+                    )
+                    .expect("Failed to decode API Endpoints");
+
+                    // Define endpoints to check
+                    let check_endpoints: Vec<RouteObject> = api_endpoints
+                        .iter()
+                        .filter(|&route_object| {
+                            route_object.method == "get" && route_object.is_route_dynamic == false
+                        })
+                        .cloned()
+                        .collect();
+
+                    // Store API Endpoints
+                    factsheet.api_endpoint_schema = Some(check_endpoints.clone());
+
+                    // Run backend application
+                    PrintCommand::UnitTest.print_agent_message(
+                        self.attributes.position.as_str(),
+                        "Backend Code Unit Testing: Starting web server...",
+                    );
+
+                    // Executing running server
+                    let mut run_backend_server: std::process::Child = Command::new("cargo")
+                        .arg("run")
+                        .current_dir(WEB_SERVER_PROJECT_PATH)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .expect("Failed to run backend application");
+
+                    // Let user know testing on server will take place soon
+                    PrintCommand::UnitTest.print_agent_message(
+                        self.attributes.position.as_str(),
+                        "Backend Code Unit Testing: Launching tests on server in 5 seconds...",
+                    );
+
+                    let seconds_sleep: Duration = Duration::from_secs(5);
+                    time::sleep(seconds_sleep).await;
+
+                    // Check status code
+                    for endpoint in check_endpoints {
+                        // Confirm url testing
+                        let testing_msg: String =
+                            format!("Testing endpoint '{}'...", endpoint.route);
+                        PrintCommand::UnitTest.print_agent_message(
+                            self.attributes.position.as_str(),
+                            testing_msg.as_ref(),
+                        );
+
+                        // Create client with timeout
+                        let client: Client = Client::builder()
+                            .timeout(Duration::from_secs(5))
+                            .build()
+                            .unwrap();
+
+                        // Test url
+                        let url: String = format!("https://localhost:8080{}", endpoint.route);
+                        match check_status_code(&client, &url).await {
+                            Ok(status_code) => {
+                                if status_code != 200 {
+                                    let err_msg: String = format!(
+                                        "WARNING: Failed to call backend url endpoint {}",
+                                        endpoint.route
+                                    );
+                                    PrintCommand::Issue.print_agent_message(
+                                        self.attributes.position.as_str(),
+                                        err_msg.as_ref(),
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                // Kill $(lsof -t -i:8080)
+                                run_backend_server
+                                    .kill()
+                                    .expect("Failed to kill backend web server");
+                                let err_msg: String = format!("Error checking backend {}", e);
+                                PrintCommand::Issue.print_agent_message(
+                                    self.attributes.position.as_str(),
+                                    err_msg.as_ref(),
+                                );
+                            }
+                        }
+                    }
+
+                    save_api_endpoints(&api_endpoint_str);
+                    PrintCommand::UnitTest.print_agent_message(
+                        self.attributes.position.as_str(),
+                        "Backend testing complete...",
+                    );
+                    run_backend_server
+                        .kill()
+                        .expect("Failed to kill backend web server on completion");
+
+                    self.attributes.state = AgentState::Finished;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn tests_writing_backend_code() {
+        let mut agent = AgentBackendDeveloper::new();
+
+        let factsheet_str: &str = r#"
+        {
+            "project_description": "build a website that fetches and tracks fitness progress including timezone information from the web",
+            "project_scope": {
+                "is_crud_required": true,
+                "is_user_login_and_logout": true,
+                "is_external_urls_required": true
+            },
+            "external_urls": [
+                "http://worldtimeapi.org/api/timezone"
+            ],
+            "backend_code": null,
+            "api_endpoint_schema": null
+        }
+        "#;
+
+        let mut factsheet: FactSheet = serde_json::from_str(factsheet_str).unwrap();
+
+        agent.attributes.state = AgentState::UnitTesting;
+
+        agent
+            .execute(&mut factsheet)
+            .await
+            .expect("Failed executing backend agent");
     }
 }

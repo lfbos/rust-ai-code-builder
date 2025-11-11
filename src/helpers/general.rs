@@ -10,6 +10,7 @@ use crate::{
 
 const CODE_TEMPLATE_PATH: &str =
     "/Users/lboscan/Documents/workspace/web_template/src/code_template.rs";
+pub const WEB_SERVER_PROJECT_PATH: &str = "/Users/lboscan/Documents/workspace/web_template/";
 const EXEC_MAIN_PATH: &str = "/Users/lboscan/Documents/workspace/web_template/src/main.rs";
 const API_SCHEMA_PATH: &str =
     "/Users/lboscan/Documents/workspace/auto_gippity/schemas/api_schema.json";
@@ -17,7 +18,6 @@ const API_SCHEMA_PATH: &str =
 // Extend ai function to encourage specific output
 pub fn extend_ai_function(ai_func: fn(&str) -> &'static str, func_input: &str) -> Message {
     let ai_function_str = ai_func(func_input);
-    dbg!(ai_function_str);
 
     // Extend the string to encourage only printing the output
     let msg: String = format!(

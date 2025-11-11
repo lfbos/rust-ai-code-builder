@@ -71,7 +71,6 @@ mod tests {
         let res = call_gpt(messages).await;
         match res {
             Ok(res_str) => {
-                dbg!(res_str);
                 assert!(true);
             }
             Err(_) => assert!(false),
