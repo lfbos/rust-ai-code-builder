@@ -70,8 +70,6 @@ impl ManagingAgent {
 
         for agent in &mut self.agents {
             let _ = agent.execute(&mut self.factsheet).await;
-
-            let agent_info = agent.get_attributes_from_agent();
         }
     }
 }
